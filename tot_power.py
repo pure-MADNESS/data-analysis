@@ -55,7 +55,7 @@ def fetch_and_plot(start_time=None, end_time=None):
     final_report = resampled.resample('10min').mean() 
 
     print("\n" + "="*95)
-    print(f"{'TIME WINDOW':<15} | {'AVG LOAD':<15} | {'AVG GEN':<15} | {'AVG PUB GRID':<15} | {'TOT kWh'}")
+    print(f"{'TIME WINDOW':<15} | {'AVG LOAD':<15} | {'AVG GEN':<15} | {'AVG PUB GRID':<15} | {'TOT Wh'}")
     print("-" * 95)
     
     for index, row in final_report.iterrows():
@@ -70,7 +70,12 @@ def fetch_and_plot(start_time=None, end_time=None):
                   f"{kwh:>8.2f}")
 
     print("="*95)
-    print("NOTE: 'AVG PUB GRID' is the average power gap (Load - Gen) in the window.")
+
+    total_kwh = (final_report['grid_diff'] * (10/60)).sum()
+
+    print("\n" + "="*95)
+    print(f"{total_kwh:.2f} Wh prelevati dalla rete pubblica")
+    print("="*95 + "\n")
 
 if __name__ == "__main__":
     fetch_and_plot()
