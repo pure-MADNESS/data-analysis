@@ -24,7 +24,6 @@ def fetch_and_plot(start_time=None, end_time=None):
         if TIME_STAMP_COL in df.columns:
             df[TIME_STAMP_COL] = pd.to_datetime(df[TIME_STAMP_COL])
             
-            # Filtro Timecode
             time_col = 'message.timecode'
             if time_col in df.columns:
                 df[time_col] = pd.to_numeric(df[time_col])
@@ -45,28 +44,33 @@ def fetch_and_plot(start_time=None, end_time=None):
     global_df = pd.concat(all_data_list, sort=False).sort_values(TIME_STAMP_COL)
     global_df.set_index(TIME_STAMP_COL, inplace=True)
 
+    # 1. Resampling stretto per calcolare il bilancio istantaneo
     resampled = global_df.resample('10s').mean().fillna(0)
 
+    # 2. Calcolo deficit istantaneo: se la richiesta è > produzione, prendo dalla rete
+    resampled['grid_diff'] = (resampled[FIELD_LOAD] - resampled[FIELD_SOURCE]).clip(lower=0)
 
-    resampled['net_balance'] = resampled[FIELD_LOAD] - resampled[FIELD_SOURCE]
+    # 3. Report finale: usiamo la MEDIA per tutto così i numeri sono confrontabili
+    # Se vuoi l'energia totale (kWh), moltiplicheremo dopo.
+    final_report = resampled.resample('10min').mean() 
 
-    resampled['grid_import'] = resampled['net_balance'].apply(lambda x: x if x > 0 else 0)
-
-    hourly_report = resampled.resample('h').agg({
-        FIELD_LOAD: 'mean',      # Potenza media richiesta in quell'ora
-        FIELD_SOURCE: 'mean',    # Potenza media generata in quell'ora
-        'grid_import': 'sum'     # Somma dei prelievi "istantanei" dalla rete
-    })
-
-    print("\n" + "="*85)
-    print(f"{'TIME WINDOW':<20} | {'P. MEAN LOAD':<15} | {'P. MEAN GEN':<15} | {'PUBLIC CURRENT':<15}")
-    print("-" * 85)
+    print("\n" + "="*95)
+    print(f"{'TIME WINDOW':<15} | {'AVG LOAD':<15} | {'AVG GEN':<15} | {'AVG PUB GRID':<15} | {'TOT kWh'}")
+    print("-" * 95)
     
-    for index, row in hourly_report.iterrows():
+    for index, row in final_report.iterrows():
         if row[FIELD_LOAD] > 0 or row[FIELD_SOURCE] > 0:
-            print(f"{str(index.strftime('%H:%M')):<20} | {row[FIELD_LOAD]:>15.2f} | {row[FIELD_SOURCE]:>15.2f} | {row['grid_import']:>15.2f}")
+            # Calcolo energia: Potenza media * tempo (10 min = 1/6 di ora)
+            kwh = row['grid_diff'] * (10/60) 
+            
+            print(f"{index.strftime('%H:%M'):<15} | "
+                  f"{row[FIELD_LOAD]:>15.2f} | "
+                  f"{row[FIELD_SOURCE]:>15.2f} | "
+                  f"{row['grid_diff']:>15.2f} | " # Ora questo è Load - Gen
+                  f"{kwh:>8.2f}")
 
-    print("="*85)
+    print("="*95)
+    print("NOTE: 'AVG PUB GRID' is the average power gap (Load - Gen) in the window.")
 
 if __name__ == "__main__":
-    fetch_and_plot(start_time=40125, end_time=40242)
+    fetch_and_plot()
