@@ -1,7 +1,5 @@
 import pandas as pd
-import matplotlib.pyplot as plt
 from pymongo import MongoClient
-import os
 import numpy as np
 
 MONGO_URI = "mongodb://localhost:27017/"
@@ -9,8 +7,9 @@ DB_NAME = "mads_socialist_4"
 FIELD_LOAD = 'message.request'
 FIELD_SOURCE = 'message.state.proposed_power'
 TIME_STAMP_COL = 'message.timestamp'
+OSCILLATION_THRESHOLD = 200.0 # W
 
-def fetch_and_plot(start_time=None, end_time=None):
+def fetch_and_calculate_energy():
     client = MongoClient(MONGO_URI)
     db = client[DB_NAME]
     
@@ -24,18 +23,30 @@ def fetch_and_plot(start_time=None, end_time=None):
         if TIME_STAMP_COL in df.columns:
             df[TIME_STAMP_COL] = pd.to_datetime(df[TIME_STAMP_COL])
             
-            time_col = 'message.timecode'
-            if time_col in df.columns:
-                df[time_col] = pd.to_numeric(df[time_col])
-                if start_time: df = df[df[time_col] >= start_time]
-                if end_time: df = df[df[time_col] <= end_time]
-            
-            if df.empty: continue
-            
             cols = [TIME_STAMP_COL]
-            if FIELD_LOAD in df.columns: cols.append(FIELD_LOAD)
-            if FIELD_SOURCE in df.columns: cols.append(FIELD_SOURCE)
-            all_data_list.append(df[cols].copy())
+            target_col = None
+            if FIELD_LOAD in df.columns: target_col = FIELD_LOAD
+            elif FIELD_SOURCE in df.columns: target_col = FIELD_SOURCE
+            
+            if target_col:
+                cols = [TIME_STAMP_COL, target_col]
+                temp_df = df[cols].copy()
+                
+                temp_df[TIME_STAMP_COL] = pd.to_datetime(temp_df[TIME_STAMP_COL])
+                temp_df = temp_df.sort_values(TIME_STAMP_COL)
+                
+                temp_df = temp_df.set_index(TIME_STAMP_COL)
+                
+                rolling_max = temp_df[target_col].rolling('30s').max()
+                rolling_std = temp_df[target_col].rolling('30s').std()
+                
+                temp_df[target_col] = np.where(rolling_std > OSCILLATION_THRESHOLD, 
+                                             rolling_max, 
+                                             temp_df[target_col])
+                
+                temp_df = temp_df.reset_index()
+                
+                all_data_list.append(temp_df)
 
     if not all_data_list:
         print("Nessun dato trovato.")
@@ -44,38 +55,32 @@ def fetch_and_plot(start_time=None, end_time=None):
     global_df = pd.concat(all_data_list, sort=False).sort_values(TIME_STAMP_COL)
     global_df.set_index(TIME_STAMP_COL, inplace=True)
 
-    # 1. Resampling stretto per calcolare il bilancio istantaneo
-    resampled = global_df.resample('10s').mean().fillna(0)
-
-    # 2. Calcolo deficit istantaneo: se la richiesta è > produzione, prendo dalla rete
-    resampled['grid_diff'] = (resampled[FIELD_LOAD] - resampled[FIELD_SOURCE]).clip(lower=0)
-
-    # 3. Report finale: usiamo la MEDIA per tutto così i numeri sono confrontabili
-    # Se vuoi l'energia totale (kWh), moltiplicheremo dopo.
-    final_report = resampled.resample('10min').mean() 
+    hourly_data = global_df.resample('1h').mean().fillna(0)
 
     print("\n" + "="*95)
-    print(f"{'TIME WINDOW':<15} | {'AVG LOAD':<15} | {'AVG GEN':<15} | {'AVG PUB GRID':<15} | {'TOT Wh'}")
+    print(f"{'TIME HOUR':<15} | {'AVG LOAD [W]':<15} | {'AVG GEN [W]':<15} | {'FROM GRID [Wh]'}")
     print("-" * 95)
     
-    for index, row in final_report.iterrows():
-        if row[FIELD_LOAD] > 0 or row[FIELD_SOURCE] > 0:
-            # Calcolo energia: Potenza media * tempo (10 min = 1/6 di ora)
-            kwh = row['grid_diff'] * (10/60) 
-            
-            print(f"{index.strftime('%H:%M'):<15} | "
-                  f"{row[FIELD_LOAD]:>15.2f} | "
-                  f"{row[FIELD_SOURCE]:>15.2f} | "
-                  f"{row['grid_diff']:>15.2f} | " # Ora questo è Load - Gen
-                  f"{kwh:>8.2f}")
+    total_grid_wh = 0.0
+
+    for index, row in hourly_data.iterrows():
+        load = row[FIELD_LOAD]
+        gen = row[FIELD_SOURCE]
+        
+        grid_power_deficit = max(0, load - gen)
+        
+        grid_wh_hour = grid_power_deficit * 1.0
+        total_grid_wh += grid_wh_hour
+        
+        if load > 0 or gen > 0:
+            print(f"{index.strftime('%H:00'):<15} | "
+                  f"{load:>15.2f} | "
+                  f"{gen:>15.2f} | "
+                  f"{grid_wh_hour:>15.2f}")
 
     print("="*95)
-
-    total_kwh = (final_report['grid_diff'] * (10/60)).sum()
-
-    print("\n" + "="*95)
-    print(f"{total_kwh:.2f} Wh prelevati dalla rete pubblica")
+    print(f"TOTALE PRELEVATO DALLA RETE: {total_grid_wh / 1000:.3f} kWh")
     print("="*95 + "\n")
 
 if __name__ == "__main__":
-    fetch_and_plot()
+    fetch_and_calculate_energy()
