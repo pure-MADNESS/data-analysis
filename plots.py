@@ -7,7 +7,7 @@ import numpy as np
 # config
 MONGO_URI = "mongodb://localhost:27017/"
 DB_NAME = "mads_socialist_4"
-EXCLUDE_FIELDS = ['_id', 'hostname', 'agent_id', 'id', 'agent_type', 'type', 'message.hostname', 'message.agent_id']
+EXCLUDE_FIELDS = ['_id', 'hostname', 'agent_id', 'id', 'agent_type', 'type', 'message.hostname', 'message.agent_id', 'fmu_input', 'covariance']
 GAP_THRESHOLD = 10.0 
 
 def fetch_and_plot(start_time=None, end_time=None):
@@ -74,7 +74,7 @@ def fetch_and_plot(start_time=None, end_time=None):
             axes = [axes]
 
         for i, col in enumerate(cols_to_plot):
-            axes[i].plot(df[time_col], df[col], label=col, color='tab:blue', linewidth=1.5, marker='o', markersize=2)
+            axes[i].plot(df[time_col], df[col], label=col, color='#2e5a27', linewidth=1.5, marker='o', markersize=2)
             axes[i].set_title(f"Topic: {topic} | Field: {col}")
             axes[i].set_ylabel("Value")
             axes[i].grid(True, linestyle='--', alpha=0.6)
@@ -91,4 +91,4 @@ def fetch_and_plot(start_time=None, end_time=None):
     print("\nDone.")
 
 if __name__ == "__main__":
-    fetch_and_plot(start_time=40125, end_time=40242)
+    fetch_and_plot(start_time=40130, end_time=40240)
