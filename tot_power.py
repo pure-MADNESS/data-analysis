@@ -3,7 +3,7 @@ from pymongo import MongoClient
 import numpy as np
 
 MONGO_URI = "mongodb://localhost:27017/"
-DB_NAME = "mads_socialist_4"
+DB_NAME = "mads_socialist_5"
 FIELD_LOAD = 'message.request'
 FIELD_SOURCE = 'message.state.proposed_power'
 TIME_STAMP_COL = 'message.timestamp'
@@ -67,7 +67,7 @@ def fetch_and_calculate_energy():
         load = row[FIELD_LOAD]
         gen = row[FIELD_SOURCE]
         
-        grid_power_deficit = max(0, load - gen)
+        grid_power_deficit = load - gen
         
         grid_wh_hour = grid_power_deficit * 1.0
         total_grid_wh += grid_wh_hour
