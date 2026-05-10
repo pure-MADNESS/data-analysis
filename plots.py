@@ -5,7 +5,7 @@ import os
 import numpy as np
 
 MONGO_URI = "mongodb://localhost:27017/"
-DB_NAME = "mads_socialist_7"
+DB_NAME = "mads_socialist_9"
 EXCLUDE_FIELDS = ['_id', 'hostname', 'agent_id', 'id', 'agent_type', 'type', 'message.hostname', 'message.agent_id', 'fmu_input']
 GAP_THRESHOLD = 10.0 
 SOURCES = {
@@ -14,7 +14,7 @@ SOURCES = {
     'source_wind_1':  '#95a5a6'   
 }
 
-def apply_oscillation_filter(series, window=20):
+def apply_oscillation_filter(series, window=21):
     if len(series) < window:
         return series
     return series.rolling(window=window, center=True, min_periods=1).min()
@@ -49,14 +49,30 @@ def fetch_and_plot(start_time=None, end_time=None):
             'covariance': 'message.state.covariance',
             'proposed_power': 'message.state.proposed_power'
         }
+        
         for metric_name, db_field in metrics.items():
             plt.figure(figsize=(12, 6))
             found_metric = False
+            
+            if metric_name == 'covariance':
+                all_t = pd.concat([df['message.timecode'] for df in comparison_data.values()]).unique()
+                combined_t = pd.DataFrame({'message.timecode': sorted(all_t)})
+                w_tot = np.zeros(len(combined_t))
+
             for topic, df in comparison_data.items():
                 if db_field in df.columns:
                     clean_df = df.dropna(subset=[db_field])
-                    plt.plot(clean_df[time_col], clean_df[db_field], label=topic, color=SOURCES[topic], linewidth=2)
+                    plt.plot(clean_df['message.timecode'], clean_df[db_field], label=topic, color=SOURCES[topic], linewidth=2)
                     found_metric = True
+                    
+                    if metric_name == 'covariance':
+                        interp_df = pd.merge_asof(combined_t, clean_df[['message.timecode', db_field]], on='message.timecode')
+                        w_tot += (1.0 / interp_df[db_field].replace(0, np.nan)).fillna(0).values
+
+            if metric_name == 'covariance' and found_metric:
+                sigma_tot = 1.0 / np.where(w_tot > 0, w_tot, np.nan)
+                plt.plot(combined_t['message.timecode'], sigma_tot, label='Total Network Covariance (1/Wtot)', color='red', linewidth=2, linestyle='--')
+
             if found_metric:
                 plt.title(f"Comparison: {metric_name} (Filtered)")
                 plt.xlabel("Timecode [s]")
