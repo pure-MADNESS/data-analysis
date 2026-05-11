@@ -5,7 +5,7 @@ import os
 import numpy as np
 
 MONGO_URI = "mongodb://localhost:27017/"
-DB_NAME = "mads_socialist_9"
+DB_NAME = "mads_socialist_10"
 EXCLUDE_FIELDS = ['_id', 'hostname', 'agent_id', 'id', 'agent_type', 'type', 'message.hostname', 'message.agent_id', 'fmu_input']
 GAP_THRESHOLD = 10.0 
 SOURCES = {
@@ -72,15 +72,43 @@ def fetch_and_plot(start_time=None, end_time=None):
             if metric_name == 'covariance' and found_metric:
                 sigma_tot = 1.0 / np.where(w_tot > 0, w_tot, np.nan)
                 plt.plot(combined_t['message.timecode'], sigma_tot, label='Total Network Covariance (1/Wtot)', color='red', linewidth=2, linestyle='--')
+                plt.yscale('log')
 
             if found_metric:
-                plt.title(f"Comparison: {metric_name} (Filtered)")
+                plt.title(f"Comparison: {metric_name}")
                 plt.xlabel("Timecode [s]")
                 plt.ylabel("Value")
                 plt.legend()
                 plt.grid(True, linestyle='--', alpha=0.5)
                 plt.savefig(f"plots/comparison_{metric_name}.png")
             plt.close()
+        
+        plt.figure(figsize=(12, 6))
+        found_combined = False
+
+        for topic, df in comparison_data.items():
+            if 'message.state.p_max' in df.columns:
+                clean_df_pmax = df.dropna(subset=['message.state.p_max'])
+                if not clean_df_pmax.empty:
+                    plt.plot(clean_df_pmax['message.timecode'], clean_df_pmax['message.state.p_max'], 
+                             label=f"{topic} (p_max)", color=SOURCES[topic], linewidth=2, linestyle='-')
+                    found_combined = True
+            
+            if 'message.state.proposed_power' in df.columns:
+                clean_df_prop = df.dropna(subset=['message.state.proposed_power'])
+                if not clean_df_prop.empty:
+                    plt.plot(clean_df_prop['message.timecode'], clean_df_prop['message.state.proposed_power'], 
+                             label=f"{topic} (proposed)", color=SOURCES[topic], linewidth=2, linestyle='--')
+                    found_combined = True
+
+        if found_combined:
+            plt.title("Comparison: P_max vs Proposed Power")
+            plt.xlabel("Timecode [s]")
+            plt.ylabel("Power")
+            plt.legend()
+            plt.grid(True, linestyle='--', alpha=0.5)
+            plt.savefig("plots/comparison_pmax_vs_proposed.png")
+        plt.close()
 
     for topic in db.list_collection_names():
         data = list(db[topic].find())
