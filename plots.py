@@ -5,7 +5,7 @@ import os
 import numpy as np
 
 MONGO_URI = "mongodb://localhost:27017/"
-DB_NAME = "mads_socialist_10"
+DB_NAME = "mads_socialist_16"
 EXCLUDE_FIELDS = ['_id', 'hostname', 'agent_id', 'id', 'agent_type', 'type', 'message.hostname', 'message.agent_id', 'fmu_input']
 GAP_THRESHOLD = 10.0 
 SOURCES = {
@@ -13,6 +13,7 @@ SOURCES = {
     'source_hydro_1': '#3498db', 
     'source_wind_1':  '#95a5a6'   
 }
+LOADS = ['load_1', 'load_2', 'load_3']
 
 def apply_oscillation_filter(series, window=21):
     if len(series) < window:
@@ -32,16 +33,31 @@ def fetch_and_plot(start_time=None, end_time=None):
         time_col = 'message.timecode'
         if time_col in df.columns:
             df[time_col] = pd.to_numeric(df[time_col])
+            df = df.sort_values(time_col)
             if start_time: df = df[df[time_col] >= start_time]
             if end_time: df = df[df[time_col] <= end_time]
-            df = df.sort_values(time_col)
             
-            target_cols = ['message.state.p_max', 'message.state.covariance', 'message.state.proposed_power']
-            for col in target_cols:
-                if col in df.columns:
-                    df[col] = apply_oscillation_filter(df[col])
+            if topic == 'source_hydro_1':
+                prop_col = 'message.state.proposed_power'
+                if prop_col in df.columns:
+                    df[prop_col] = df[prop_col].rolling(window=5, center=True, min_periods=1).mean()
             
             comparison_data[topic] = df
+
+    load_data = {}
+    for topic in LOADS:
+        data = list(db[topic].find())
+        if not data: continue
+        df = pd.json_normalize(data)
+        time_col = 'message.timecode'
+        req_col = 'message.request'
+        if time_col in df.columns and req_col in df.columns:
+            df[time_col] = pd.to_numeric(df[time_col])
+            df[time_col] = (df[time_col] / 60).round() * 60
+            df = df.sort_values(time_col)
+            if start_time: df = df[df[time_col] >= start_time]
+            if end_time: df = df[df[time_col] <= end_time]
+            load_data[topic] = df[[time_col, req_col]].dropna()
 
     if comparison_data:
         metrics = {
@@ -51,6 +67,8 @@ def fetch_and_plot(start_time=None, end_time=None):
         }
         
         for metric_name, db_field in metrics.items():
+            if metric_name == 'proposed_power': continue 
+            
             plt.figure(figsize=(12, 6))
             found_metric = False
             
@@ -98,15 +116,53 @@ def fetch_and_plot(start_time=None, end_time=None):
                 clean_df_prop = df.dropna(subset=['message.state.proposed_power'])
                 if not clean_df_prop.empty:
                     plt.plot(clean_df_prop['message.timecode'], clean_df_prop['message.state.proposed_power'], 
-                             label=f"{topic} (proposed)", color=SOURCES[topic], linewidth=2, linestyle='--')
+                             label=f"{topic} (proposed)", color=SOURCES[topic], linewidth=1.5, linestyle='-.')
                     found_combined = True
 
+        all_times = []
+        for df in comparison_data.values():
+            all_times.extend(df['message.timecode'].tolist())
+        for df in load_data.values():
+            all_times.extend(df['message.timecode'].tolist())
+        
+        if all_times:
+            unified_t = pd.DataFrame({'message.timecode': sorted(list(set(all_times)))})
+            
+            total_proposed = pd.Series(np.zeros(len(unified_t)), index=unified_t.index)
+            for topic, df in comparison_data.items():
+                if 'message.state.proposed_power' in df.columns:
+                    clean_df_prop = df[['message.timecode', 'message.state.proposed_power']].dropna()
+                    if not clean_df_prop.empty:
+                        merged_prop = pd.merge_asof(unified_t, clean_df_prop, on='message.timecode', direction='backward')
+                        req = merged_prop['message.state.proposed_power'].bfill().fillna(0)
+                        total_proposed += req
+            
+            total_proposed = total_proposed.rolling(window=1001, center=True, min_periods=1).median()
+            
+            plt.plot(unified_t['message.timecode'], total_proposed, 
+                     label="Total Output Power (Dispatched)", color='#8e44ad', linewidth=2, linestyle='-.')
+            found_combined = True
+
+            if load_data:
+                total_demand = pd.Series(np.zeros(len(unified_t)), index=unified_t.index)
+                for load_topic, df in load_data.items():
+                    merged = pd.merge_asof(unified_t, df, on='message.timecode', direction='backward')
+                    req = merged['message.request'].bfill().fillna(0) 
+                    total_demand += req
+                
+                total_demand = total_demand.rolling(window=301, center=True, min_periods=1).median()
+                
+                plt.plot(unified_t['message.timecode'], total_demand, 
+                         label="Total P_Demand (Sum of Loads)", color='gray', linewidth=2, linestyle='--', alpha=0.5, drawstyle='steps-post')
+                found_combined = True
+
         if found_combined:
-            plt.title("Comparison: P_max vs Proposed Power")
+            plt.title("Comparison: P_max vs Total Output Power vs Total Demand")
             plt.xlabel("Timecode [s]")
-            plt.ylabel("Power")
-            plt.legend()
+            plt.ylabel("Power [W]")
+            plt.legend(bbox_to_anchor=(1.04, 1), loc="upper left")
             plt.grid(True, linestyle='--', alpha=0.5)
+            plt.tight_layout()
             plt.savefig("plots/comparison_pmax_vs_proposed.png")
         plt.close()
 
