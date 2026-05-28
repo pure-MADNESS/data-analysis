@@ -75,7 +75,8 @@ def fetch_and_plot(start_time=None, end_time=None):
             if metric_name == 'covariance':
                 all_t = pd.concat([df['message.timecode'] for df in comparison_data.values()]).unique()
                 combined_t = pd.DataFrame({'message.timecode': sorted(all_t)})
-                w_tot = np.zeros(len(combined_t))
+                num_sum = np.zeros(len(combined_t))
+                den_sum = np.zeros(len(combined_t))
 
             for topic, df in comparison_data.items():
                 if db_field in df.columns:
@@ -83,13 +84,19 @@ def fetch_and_plot(start_time=None, end_time=None):
                     plt.plot(clean_df['message.timecode'], clean_df[db_field], label=topic, color=SOURCES[topic], linewidth=2)
                     found_metric = True
                     
-                    if metric_name == 'covariance':
-                        interp_df = pd.merge_asof(combined_t, clean_df[['message.timecode', db_field]], on='message.timecode')
-                        w_tot += (1.0 / interp_df[db_field].replace(0, np.nan)).fillna(0).values
+                    if metric_name == 'covariance' and 'message.state.p_max' in df.columns:
+                        temp_df = df[['message.timecode', db_field, 'message.state.p_max']].dropna()
+                        interp_df = pd.merge_asof(combined_t, temp_df, on='message.timecode')
+                        
+                        cov_i = interp_df[db_field].replace(0, np.nan)
+                        pmax_i = interp_df['message.state.p_max']
+                        
+                        num_sum += ((pmax_i ** 2) / cov_i).fillna(0).values
+                        den_sum += (pmax_i / cov_i).fillna(0).values
 
             if metric_name == 'covariance' and found_metric:
-                sigma_tot = 1.0 / np.where(w_tot > 0, w_tot, np.nan)
-                plt.plot(combined_t['message.timecode'], sigma_tot, label='Total Network Covariance (1/Wtot)', color='red', linewidth=2, linestyle='--')
+                sigma_tot = np.where(den_sum > 0, num_sum / (den_sum ** 2), np.nan)
+                plt.plot(combined_t['message.timecode'], sigma_tot, label='Total Network Covariance (WLS Capacity-Weighted)', color='red', linewidth=3, linestyle='--')
                 plt.yscale('log')
 
             if found_metric:
