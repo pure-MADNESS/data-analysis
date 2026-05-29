@@ -85,7 +85,7 @@ def fetch_and_plot(start_time=None, end_time=None):
                     found_metric = True
                     
                     if metric_name == 'covariance' and 'message.state.p_max' in df.columns:
-                        temp_df = df[['message.timecode', db_field, 'message.state.p_max']].dropna()
+                        temp_df = df[['message.timecode', db_field, 'message.state.p_max']].dropna().drop_duplicates(subset=['message.timecode']).sort_values('message.timecode')
                         interp_df = pd.merge_asof(combined_t, temp_df, on='message.timecode')
                         
                         cov_i = interp_df[db_field].replace(0, np.nan)
@@ -95,12 +95,16 @@ def fetch_and_plot(start_time=None, end_time=None):
                         den_sum += (pmax_i / cov_i).fillna(0).values
 
             if metric_name == 'covariance' and found_metric:
-                sigma_tot = np.where(den_sum > 0, num_sum / (den_sum ** 2), np.nan)
-                plt.plot(combined_t['message.timecode'], sigma_tot, label='Total Network Covariance (WLS Capacity-Weighted)', color='red', linewidth=3, linestyle='--')
+                safe_den = np.where(den_sum > 0, den_sum, 1.0)
+                sigma_tot = np.where(den_sum > 0, num_sum / (safe_den ** 2), np.nan)
+                plt.plot(combined_t['message.timecode'], sigma_tot, label='Total Network Variance', color='red', linewidth=3, linestyle='--')
                 plt.yscale('log')
 
             if found_metric:
-                plt.title(f"Comparison: {metric_name}")
+                if metric_name == 'covariance':
+                    plt.title("Comparison: variance")
+                else:
+                    plt.title(f"Comparison: {metric_name}")
                 plt.xlabel("Timecode [s]")
                 plt.ylabel("Value")
                 plt.legend()
@@ -138,7 +142,7 @@ def fetch_and_plot(start_time=None, end_time=None):
             total_proposed = pd.Series(np.zeros(len(unified_t)), index=unified_t.index)
             for topic, df in comparison_data.items():
                 if 'message.state.proposed_power' in df.columns:
-                    clean_df_prop = df[['message.timecode', 'message.state.proposed_power']].dropna()
+                    clean_df_prop = df[['message.timecode', 'message.state.proposed_power']].dropna().drop_duplicates(subset=['message.timecode']).sort_values('message.timecode')
                     if not clean_df_prop.empty:
                         merged_prop = pd.merge_asof(unified_t, clean_df_prop, on='message.timecode', direction='backward')
                         req = merged_prop['message.state.proposed_power'].bfill().fillna(0)
@@ -153,7 +157,8 @@ def fetch_and_plot(start_time=None, end_time=None):
             if load_data:
                 total_demand = pd.Series(np.zeros(len(unified_t)), index=unified_t.index)
                 for load_topic, df in load_data.items():
-                    merged = pd.merge_asof(unified_t, df, on='message.timecode', direction='backward')
+                    df_clean = df.drop_duplicates(subset=['message.timecode']).sort_values('message.timecode')
+                    merged = pd.merge_asof(unified_t, df_clean, on='message.timecode', direction='backward')
                     req = merged['message.request'].bfill().fillna(0) 
                     total_demand += req
                 
